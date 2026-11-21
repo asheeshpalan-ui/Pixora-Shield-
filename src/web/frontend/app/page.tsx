@@ -26,6 +26,7 @@ export default function Home() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [dragging, setDragging] = useState(false);
+  const [protectMainFace, setProtectMainFace] = useState(false);
 
   const sourceUrl = useMemo(
     () => (file ? URL.createObjectURL(file) : ""),
@@ -58,6 +59,7 @@ export default function Home() {
     try {
       const form = new FormData();
       form.append("video", file);
+      form.append("protect_main_face", protectMainFace ? "true" : "false");
       const response = await fetch(`${API_URL}/api/process`, {
         method: "POST",
         body: form,
@@ -104,6 +106,17 @@ export default function Home() {
             <div className="uploadIcon">↑</div>
             <strong>{file ? file.name : "Choose a video"}</strong>
             <span>{file ? `${(file.size / 1024 / 1024).toFixed(1)} MB` : "MP4, MOV, AVI, MKV or WebM"}</span>
+          </label>
+          <label className="protectOption">
+            <input
+              type="checkbox"
+              checked={protectMainFace}
+              onChange={(event) => setProtectMainFace(event.target.checked)}
+            />
+            <span>
+              <strong>Protect the main person</strong>
+              <small>Blur other faces instead</small>
+            </span>
           </label>
           <button
             className="processButton"

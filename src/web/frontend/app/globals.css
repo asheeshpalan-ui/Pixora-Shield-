@@ -118,6 +118,17 @@ nav {
 }
 .dropzone strong { max-width: 280px; word-break: break-word; }
 .dropzone span { margin-top: 8px; color: #7b827d; font-size: 12px; }
+.protectOption {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 10px 4px;
+  cursor: pointer;
+}
+.protectOption input { width: 18px; height: 18px; accent-color: var(--green); }
+.protectOption span { display: flex; flex-direction: column; }
+.protectOption small { margin-top: 3px; color: #7b827d; }
 .processButton {
   width: 100%;
   height: 54px;

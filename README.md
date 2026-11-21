@@ -4,9 +4,9 @@ Pixora Shield is a focused privacy MVP that uploads a video, detects faces, and
 optionally detects license plates, then produces an MP4 with those regions
 blurred.
 
-The largest face first detected in a video is treated as the main subject and
-is kept visible. Other detected faces are blurred. Short detector misses are
-covered by frame-to-frame tracking. License plates are detected only by a
+By default, every detected face is blurred. Enable “Protect the main person”
+in the frontend to keep the largest/tracked face visible and blur other faces.
+Short detector misses are covered by frame-to-frame tracking. License plates are detected only by a
 configured model: set `PLATE_MODEL_PATH` for local YOLO weights, or set
 `ROBOFLOW_API_KEY`, `ROBOFLOW_MODEL_ID`, and optional `ROBOFLOW_VERSION` for a
 hosted Roboflow model.

@@ -62,9 +62,10 @@ def detect_faces(frame):
     gray = cv2.equalizeHist(gray)
     faces = face_detector.detectMultiScale(
         gray,
-        scaleFactor=1.1,
-        minNeighbors=5,
-        minSize=(24, 24),
+        scaleFactor=1.05,
+        minNeighbors=3,
+        minSize=(20, 20),
+        flags=cv2.CASCADE_SCALE_IMAGE,
     )
     return [[int(x), int(y), int(x + w), int(y + h)] for (x, y, w, h) in faces]
 
@@ -105,6 +106,10 @@ def process_video():
     video = request.files.get("video")
     if video is None or not video.filename:
         return jsonify({"error": "A video file is required"}), 400
+
+    protect_main_face = request.form.get(
+        "protect_main_face", "false"
+    ).strip().lower() in {"1", "true", "yes", "on"}
 
     if not video.filename.lower().endswith((".mp4", ".mov", ".avi", ".mkv", ".webm")):
         return jsonify({"error": "Unsupported video format"}), 400
@@ -148,20 +153,24 @@ def process_video():
         if not ok:
             break
         detected_faces = detect_faces(frame)
-        primary_face, primary_missing_frames = choose_primary_face(
-            detected_faces, primary_face, primary_missing_frames
-        )
-        secondary_faces = [
-            face for face in detected_faces
-            if primary_face is None or box_iou(primary_face, face) < 0.35
-        ]
-        face_regions = face_tracker.update(secondary_faces)
+        if protect_main_face:
+            primary_face, primary_missing_frames = choose_primary_face(
+                detected_faces, primary_face, primary_missing_frames
+            )
+            secondary_faces = [
+                face for face in detected_faces
+                if primary_face is None or box_iou(primary_face, face) < 0.35
+            ]
+            face_regions = face_tracker.update(secondary_faces)
+            face_regions = [
+                face for face in face_regions
+                if box_iou(primary_face, face) < 0.35
+            ]
+        else:
+            primary_face = None
+            face_regions = face_tracker.update(detected_faces)
         _, plate_regions = plate_detector.process_frame(frame, frame_id)
         plate_regions = plate_tracker.update(plate_regions)
-        face_regions = [
-            face for face in face_regions
-            if primary_face is None or box_iou(primary_face, face) < 0.35
-        ]
         plate_regions = [
             plate for plate in plate_regions
             if primary_face is None or box_iou(primary_face, plate) < 0.35
