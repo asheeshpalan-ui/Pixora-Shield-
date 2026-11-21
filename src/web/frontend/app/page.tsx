@@ -10,6 +10,10 @@ type Metrics = {
   average_fps: number;
   resolution: string;
   plate_detection_enabled: boolean;
+  face_models?: {
+    yunet: boolean;
+    cascades: number;
+  };
 };
 
 type Result = {

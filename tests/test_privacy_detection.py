@@ -38,3 +38,11 @@ def test_primary_face_is_selected_and_not_treated_as_secondary():
 
     assert primary == [100, 100, 200, 200]
     assert misses == 0
+
+
+def test_yunet_model_file_is_real_and_loaded():
+    from pathlib import Path
+
+    model = Path("models/face_detection_yunet.onnx")
+    assert model.is_file()
+    assert model.stat().st_size > 200_000

@@ -23,6 +23,10 @@ claude plugin install roboflow
 This plugin is for model selection, deployment, datasets, and inference
 workflows. It does not make the uploaded video API detect plates by itself.
 
+Processed videos are browser-ready MP4/H264. The backend uses bundled
+`imageio-ffmpeg` to transcode OpenCV output when FFmpeg is not installed on the
+system.
+
 ## Run locally
 
 Backend:

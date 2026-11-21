@@ -1,4 +1,6 @@
 import os
+import shutil
+import subprocess
 import time
 import uuid
 from pathlib import Path
@@ -42,32 +44,100 @@ def find_face_cascade():
     ])
     return next((path for path in candidates if Path(path).is_file()), "")
 
+def load_face_models():
+    cascade_detectors = []
+    cascade_paths = [
+        str(BASE_DIR / "models" / "haarcascade_frontalface_default.xml"),
+        str(BASE_DIR / "models" / "lbpcascade_frontalface.xml"),
+        str(BASE_DIR / "models" / "haarcascade_profileface.xml"),
+    ]
+    if hasattr(cv2, "data"):
+        cascade_paths.append(
+            str(Path(cv2.data.haarcascades) / "haarcascade_frontalface_default.xml")
+        )
 
-face_cascade_path = find_face_cascade()
-try:
-    face_detector = (
-        cv2.CascadeClassifier(face_cascade_path)
-        if face_cascade_path and hasattr(cv2, "CascadeClassifier")
-        else None
-    )
-except cv2.error:
-    face_detector = None
+    if hasattr(cv2, "CascadeClassifier"):
+        for cascade_path in cascade_paths:
+            if not Path(cascade_path).is_file():
+                continue
+            try:
+                detector = cv2.CascadeClassifier(cascade_path)
+                if not detector.empty():
+                    cascade_detectors.append(detector)
+            except cv2.error:
+                continue
+
+    yunet_detector = None
+    yunet_path = str(BASE_DIR / "models" / "face_detection_yunet.onnx")
+    if Path(yunet_path).is_file() and hasattr(cv2, "FaceDetectorYN"):
+        try:
+            yunet_detector = cv2.FaceDetectorYN.create(
+                yunet_path,
+                "",
+                (320, 320),
+                0.60,
+                0.3,
+                5000,
+                cv2.dnn.DNN_BACKEND_OPENCV,
+                cv2.dnn.DNN_TARGET_CPU,
+            )
+        except Exception:
+            yunet_detector = None
+
+    return cascade_detectors, yunet_detector
+
+
+cascade_detectors, yunet_detector = load_face_models()
 plate_detector = PlateDetector(conf_thresh=float(os.getenv("PLATE_CONF_THRESH", "0.25")))
 
 
 def detect_faces(frame):
-    if face_detector is None or face_detector.empty():
+    h, w = frame.shape[:2]
+    detections = []
+
+    if yunet_detector is not None:
+        try:
+            yunet_detector.setInputSize((w, h))
+            _, faces = yunet_detector.detect(frame)
+            if faces is not None:
+                for face in faces:
+                    x, y, box_w, box_h, confidence = face[:5]
+                    if float(confidence) >= 0.60:
+                        detections.append([
+                            int(x),
+                            int(y),
+                            int(x + box_w),
+                            int(y + box_h),
+                        ])
+        except Exception:
+            pass
+
+    if cascade_detectors:
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        gray = cv2.equalizeHist(gray)
+        for detector in cascade_detectors:
+            faces = detector.detectMultiScale(
+                gray,
+                scaleFactor=1.05,
+                minNeighbors=3,
+                minSize=(20, 20),
+                flags=cv2.CASCADE_SCALE_IMAGE,
+            )
+            for x, y, box_w, box_h in faces:
+                detections.append([
+                    int(x),
+                    int(y),
+                    int(x + box_w),
+                    int(y + box_h),
+                ])
+
+    unique = []
+    for box in detections:
+        if not any(box_iou(box, existing) >= 0.35 for existing in unique):
+            unique.append(box)
+    if not unique:
         return []
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    gray = cv2.equalizeHist(gray)
-    faces = face_detector.detectMultiScale(
-        gray,
-        scaleFactor=1.05,
-        minNeighbors=3,
-        minSize=(20, 20),
-        flags=cv2.CASCADE_SCALE_IMAGE,
-    )
-    return [[int(x), int(y), int(x + w), int(y + h)] for (x, y, w, h) in faces]
+    return unique
 
 
 def choose_primary_face(face_regions, previous_primary, missing_frames):
@@ -92,12 +162,63 @@ def choose_primary_face(face_regions, previous_primary, missing_frames):
     return best_face, 0
 
 
+def transcode_h264(raw_path, output_path):
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        try:
+            from imageio_ffmpeg import get_ffmpeg_exe
+            ffmpeg = get_ffmpeg_exe()
+        except Exception:
+            ffmpeg = None
+    if not ffmpeg:
+        return False
+    command = [
+        ffmpeg,
+        "-y",
+        "-i",
+        str(raw_path),
+        "-map",
+        "0:v:0",
+        "-an",
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        "-preset",
+        "veryfast",
+        "-crf",
+        "23",
+        "-movflags",
+        "+faststart",
+        str(output_path),
+    ]
+    try:
+        result = subprocess.run(
+            command,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=3600,
+            check=False,
+        )
+        return result.returncode == 0 and output_path.is_file()
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
 @app.get("/api/health")
 def health():
     return jsonify({
         "status": "ok",
-        "face_detection": bool(face_detector is not None and not face_detector.empty()),
+        "face_detection": bool(cascade_detectors or yunet_detector is not None),
         "plate_detection": plate_detector.is_available,
+        "face_models": {
+            "yunet": yunet_detector is not None,
+            "cascades": len(cascade_detectors),
+        },
+        "video_transcoder": bool(
+            shutil.which("ffmpeg")
+            or os.getenv("IMAGEIO_FFMPEG_EXE")
+        ),
     })
 
 
@@ -118,6 +239,7 @@ def process_video():
     input_path = UPLOAD_DIR / f"{job_id}_{video.filename}"
     output_name = f"{job_id}_protected.mp4"
     output_path = OUTPUT_DIR / output_name
+    raw_output_path = OUTPUT_DIR / f"{job_id}_raw.mp4"
     video.save(input_path)
 
     capture = cv2.VideoCapture(str(input_path))
@@ -129,13 +251,20 @@ def process_video():
     width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
     total_frames = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
-    writer = cv2.VideoWriter(
-        str(output_path),
-        cv2.VideoWriter_fourcc(*"mp4v"),
-        fps,
-        (width, height),
-    )
-    if not writer.isOpened():
+    writer = None
+    selected_codec = None
+    for codec in ("avc1", "H264", "mp4v"):
+        candidate = cv2.VideoWriter(
+            str(raw_output_path),
+            cv2.VideoWriter_fourcc(*codec),
+            fps,
+            (width, height),
+        )
+        if candidate.isOpened():
+            writer = candidate
+            selected_codec = codec
+            break
+    if writer is None:
         capture.release()
         input_path.unlink(missing_ok=True)
         return jsonify({"error": "Could not create the output video"}), 500
@@ -185,6 +314,13 @@ def process_video():
     capture.release()
     writer.release()
 
+    if transcode_h264(raw_output_path, output_path):
+        raw_output_path.unlink(missing_ok=True)
+    elif raw_output_path.exists():
+        if output_path.exists():
+            output_path.unlink()
+        raw_output_path.rename(output_path)
+
     elapsed = time.perf_counter() - started
     original_url = f"/api/original/{input_path.name}"
     processed_url = f"/api/output/{output_name}"
@@ -199,7 +335,11 @@ def process_video():
             "processing_seconds": round(elapsed, 2),
             "average_fps": round(processed_frames / elapsed, 2) if elapsed else 0,
             "resolution": f"{width}x{height}",
-            "plate_detection_enabled": plate_detector.model is not None,
+            "plate_detection_enabled": plate_detector.is_available,
+            "face_models": {
+                "yunet": yunet_detector is not None,
+                "cascades": len(cascade_detectors),
+            },
         },
     })
 
