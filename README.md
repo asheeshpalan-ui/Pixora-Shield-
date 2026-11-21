@@ -25,11 +25,4 @@ npm run dev
 
 Open `http://localhost:3000`. The API runs at `http://localhost:5000`.
 
-## Optional license-plate model
 
-Set `PLATE_MODEL_PATH` to a YOLO `.pt` model:
-
-```bash
-pip install ultralytics torch
-PLATE_MODEL_PATH=/path/to/plate_best.pt python -m src.web.backend.run
-```
