@@ -8,7 +8,13 @@ from flask import Flask, jsonify, send_from_directory
 from flask import request
 from flask_cors import CORS
 
-from src.models.detection.blur_utils import apply_blur_regions
+from src.models.detection.blur_utils import (
+    RegionTracker,
+    apply_blur_regions,
+    box_area,
+    box_iou,
+    box_center,
+)
 from src.models.detection.plate_blur.plate_detector import PlateDetector
 
 
@@ -63,6 +69,31 @@ def detect_faces(frame):
     return [[int(x), int(y), int(x + w), int(y + h)] for (x, y, w, h) in faces]
 
 
+def choose_primary_face(face_regions, previous_primary, missing_frames):
+    if not face_regions:
+        return previous_primary, missing_frames + 1
+
+    if previous_primary is None:
+        return max(face_regions, key=box_area), 0
+
+    best_face = max(
+        face_regions,
+        key=lambda face: (
+            box_iou(previous_primary, face),
+            -(
+                (box_center(previous_primary)[0] - box_center(face)[0]) ** 2
+                + (box_center(previous_primary)[1] - box_center(face)[1]) ** 2
+            ),
+        ),
+    )
+    if box_iou(previous_primary, best_face) >= 0.05:
+        return best_face, 0
+
+    if missing_frames >= 12:
+        return max(face_regions, key=box_area), 0
+    return previous_primary, missing_frames + 1
+
+
 @app.get("/api/health")
 def health():
     return jsonify({
@@ -111,12 +142,25 @@ def process_video():
     processed_frames = 0
     detected_regions = 0
     frame_id = 0
+    primary_face = None
+    primary_missing_frames = 0
+    face_tracker = RegionTracker(max_misses=10)
+    plate_tracker = RegionTracker(max_misses=12)
     while True:
         ok, frame = capture.read()
         if not ok:
             break
-        face_regions = detect_faces(frame)
+        detected_faces = detect_faces(frame)
+        primary_face, primary_missing_frames = choose_primary_face(
+            detected_faces, primary_face, primary_missing_frames
+        )
+        secondary_faces = [
+            face for face in detected_faces
+            if primary_face is None or box_iou(primary_face, face) < 0.35
+        ]
+        face_regions = face_tracker.update(secondary_faces)
         _, plate_regions = plate_detector.process_frame(frame, frame_id)
+        plate_regions = plate_tracker.update(plate_regions)
         regions = face_regions + plate_regions
         detected_regions += len(regions)
         processed = apply_blur_regions(frame, regions)
