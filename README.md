@@ -6,9 +6,22 @@ blurred.
 
 The largest face first detected in a video is treated as the main subject and
 is kept visible. Other detected faces are blurred. Short detector misses are
-covered by frame-to-frame tracking. License-plate detection is enhanced by a
-YOLO model when `PLATE_MODEL_PATH` is configured; without one, a built-in
-rectangular-region fallback remains active.
+covered by frame-to-frame tracking. License plates are detected only by a
+configured model: set `PLATE_MODEL_PATH` for local YOLO weights, or set
+`ROBOFLOW_API_KEY`, `ROBOFLOW_MODEL_ID`, and optional `ROBOFLOW_VERSION` for a
+hosted Roboflow model.
+
+## Roboflow computer vision plugin
+
+On the machine running Claude Code, add the official plugin once:
+
+```powershell
+claude plugin marketplace add roboflow/computer-vision-skills
+claude plugin install roboflow
+```
+
+This plugin is for model selection, deployment, datasets, and inference
+workflows. It does not make the uploaded video API detect plates by itself.
 
 ## Run locally
 

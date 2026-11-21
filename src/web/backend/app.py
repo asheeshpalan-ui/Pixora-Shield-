@@ -76,22 +76,19 @@ def choose_primary_face(face_regions, previous_primary, missing_frames):
     if previous_primary is None:
         return max(face_regions, key=box_area), 0
 
-    best_face = max(
-        face_regions,
-        key=lambda face: (
-            box_iou(previous_primary, face),
-            -(
-                (box_center(previous_primary)[0] - box_center(face)[0]) ** 2
-                + (box_center(previous_primary)[1] - box_center(face)[1]) ** 2
-            ),
-        ),
-    )
-    if box_iou(previous_primary, best_face) >= 0.05:
-        return best_face, 0
+    previous_center = box_center(previous_primary)
 
-    if missing_frames >= 12:
-        return max(face_regions, key=box_area), 0
-    return previous_primary, missing_frames + 1
+    def tracking_score(face):
+        iou = box_iou(previous_primary, face)
+        center = box_center(face)
+        distance = (
+            (previous_center[0] - center[0]) ** 2
+            + (previous_center[1] - center[1]) ** 2
+        ) ** 0.5
+        return iou * 100 - distance + box_area(face) / 100000
+
+    best_face = max(face_regions, key=tracking_score)
+    return best_face, 0
 
 
 @app.get("/api/health")
@@ -99,7 +96,7 @@ def health():
     return jsonify({
         "status": "ok",
         "face_detection": bool(face_detector is not None and not face_detector.empty()),
-        "plate_detection": plate_detector.model is not None,
+        "plate_detection": plate_detector.is_available,
     })
 
 
@@ -161,6 +158,14 @@ def process_video():
         face_regions = face_tracker.update(secondary_faces)
         _, plate_regions = plate_detector.process_frame(frame, frame_id)
         plate_regions = plate_tracker.update(plate_regions)
+        face_regions = [
+            face for face in face_regions
+            if primary_face is None or box_iou(primary_face, face) < 0.35
+        ]
+        plate_regions = [
+            plate for plate in plate_regions
+            if primary_face is None or box_iou(primary_face, plate) < 0.35
+        ]
         regions = face_regions + plate_regions
         detected_regions += len(regions)
         processed = apply_blur_regions(frame, regions)
