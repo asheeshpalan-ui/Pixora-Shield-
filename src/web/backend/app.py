@@ -38,7 +38,14 @@ def find_face_cascade():
 
 
 face_cascade_path = find_face_cascade()
-face_detector = cv2.CascadeClassifier(face_cascade_path) if face_cascade_path else None
+try:
+    face_detector = (
+        cv2.CascadeClassifier(face_cascade_path)
+        if face_cascade_path and hasattr(cv2, "CascadeClassifier")
+        else None
+    )
+except cv2.error:
+    face_detector = None
 plate_detector = PlateDetector(conf_thresh=float(os.getenv("PLATE_CONF_THRESH", "0.25")))
 
 
